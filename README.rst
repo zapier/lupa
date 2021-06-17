@@ -3,6 +3,14 @@ Lupa
 
 .. image:: logo/logo-220x200.png
 
+    **Note**: this package is just a non-wheel, post1 release
+    so that we can deploy to our private PyPi without invoking
+    bundled 5.3, since --no-binary is not supported in Poetry.
+
+    All I did here was boot up zapier/python:2021.02.19, pip
+    install cython, and then do setup.py sdist upload -r ..
+    to our private PyPi.
+
 Lupa integrates the runtimes of Lua_ or LuaJIT2_ into CPython.
 It is a partial rewrite of LunaticPython_ in Cython_ with some
 additional features such as proper coroutine support.
