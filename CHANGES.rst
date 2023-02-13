@@ -1,16 +1,25 @@
 Lupa change log
 ===============
 
-Upcoming release
-----------------
+2.0a1 (2022-??-??)
+------------------
 
-* Lua 5.4 and Python 3.9 are supported.
+* GH#217: Lua stack traces in Python exception messages are now reversed to
+  match the order of Python stack traces.
 
-* GH#171: Python references in Lua are not more safely reference counted
+* GH#196: Lupa now ships separate extension modules built with Lua 5.3,
+  Lua 5.4, LuaJIT 2.0 and LuaJIT 2.1 beta.  Note that this is build specific
+  and may depend on the platform.  A normal Python import cascade can be used.
+
+* GH#171: Python references in Lua are now more safely reference counted
   to prevent garbage collection glitches.
   (patch by Guilherme Dantas)
 
 * GH#146: Lua integers in Lua 5.3+ are converted from and to Python integers.
+  (patch by Guilherme Dantas)
+
+* GH#180: The ``python.enumerate()`` function now returns indices as integers
+  if supported by Lua.
   (patch by Guilherme Dantas)
 
 * GH#178: The Lua integer limits can be read from the module as
@@ -21,18 +30,64 @@ Upcoming release
   table index lookup from Python could crash Python.
   (patch by Guilherme Dantas)
 
-* The runtime version of the Lua library as a tuple (e.g. ``(5,3)``)
-  is provided via ``lupa.LUA_VERSION`` and ``LuaRuntime.lua_version``.
-
-* The Lua implementation name and version string is provided as
-  ``LuaRuntime.lua_implementation``.
-
 * GH#176: A new function ``python.args(*args, **kwargs)`` was added
   to help with building Python argument tuples and keyword argument dicts
   for Python function calls from Lua code.
 
 * GH#177: Tables that are not sequences raise ``IndexError`` when unpacking
   them.  Previously, non-sequential items were simply ignored.
+
+* GH#179: Resolve some C compiler warnings about signed/unsigned comparisons.
+  (patch by Guilherme Dantas)
+
+
+1.14.1 (2022-11-16)
+-------------------
+
+* Rebuild with Cython 0.29.32 to support Python 3.11.
+
+
+1.13 (2022-03-01)
+-----------------
+
+* Bundled Lua source files were missing in the source distribution.
+
+
+1.12 (2022-02-24)
+-----------------
+
+* GH#197: Some binary wheels in the last releases were not correctly linked with Lua.
+
+* GH#194: An absolute file path appeared in the ``SOURCES.txt`` metadata
+  of the source distribution.
+
+
+1.11 (2022-02-23)
+-----------------
+
+* Use Lua 5.4.4 in binary wheels and as bundled Lua.
+
+* Built with Cython 0.29.28 to support Python 3.10/11.
+
+
+1.10 (2021-09-02)
+-----------------
+
+* GH#147: Lua 5.4 is supported.
+  (patch by Russel Davis)
+
+* The runtime version of the Lua library as a tuple (e.g. ``(5,3)``)
+  is provided via ``lupa.LUA_VERSION`` and ``LuaRuntime.lua_version``.
+
+* The Lua implementation name and version string is provided as
+  ``LuaRuntime.lua_implementation``.
+
+* ``setup.py`` accepts new command line arguments ``--lua-lib`` and ``--lua-includes``
+  to specify the
+
+* Use Lua 5.4.3 in binary wheels and as bundled Lua.
+
+* Built with Cython 0.29.24 to support Python 3.9.
 
 
 1.9 (2019-12-21)
