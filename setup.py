@@ -11,6 +11,7 @@ import sys
 from glob import iglob
 from io import open as io_open
 from sys import platform
+from platform import machine as get_machine
 
 try:
     # use setuptools if available
@@ -18,7 +19,7 @@ try:
 except ImportError:
     from distutils.core import setup, Extension
 
-VERSION = '2.0a1'
+VERSION = '2.1'
 
 extra_setup_args = {}
 
@@ -29,7 +30,6 @@ basedir = os.path.abspath(os.path.dirname(__file__))
 
 if 'setuptools' in sys.modules:
     extra_setup_args['test_suite'] = 'lupa.tests.suite'
-    extra_setup_args["zip_safe"] = False
 
 
 class PkgConfigError(RuntimeError):
@@ -260,11 +260,17 @@ def use_bundled_lua(path, macros):
 
     print('Using bundled Lua in %s' % libname)
 
-    # Parse .o files from 'makefile'
-    makefile = os.path.join(path, "makefile")
+    # Find Makefile in subrepos and downloaded sources.
+    for makefile_path in [os.path.join("src", "makefile"), os.path.join("src", "Makefile"), "makefile", "Makefile"]:
+        makefile = os.path.join(path, makefile_path)
+        if os.path.exists(makefile):
+            break
+    else:
+        raise RuntimeError("Makefile not found in " + path)
+
+    # Parse .o files from Makefile
     match_var = re.compile(r"(CORE|AUX|LIB|ALL)_O\s*=(.*)").match
     is_indented = re.compile(r"\s+").match
-
     obj_files = []
     continuing = False
     with open(makefile) as f:
@@ -299,7 +305,7 @@ def use_bundled_lua(path, macros):
         os.path.splitext(obj_file)[0] + '.c' if obj_file != 'lj_vm.o' else 'lj_vm.s'
         for obj_file in obj_files
     ]
-    if 'lua52' in path:
+    if libname == 'lua52':
         lua_sources.extend(['lbitlib.c', 'lcorolib.c', 'lctype.c'])
     src_dir = os.path.dirname(makefile)
     ext_libraries = [
@@ -339,6 +345,8 @@ if has_option('--without-assert'):
     c_defines.append(('CYTHON_WITHOUT_ASSERTIONS', None))
 if has_option('--with-lua-checks'):
     c_defines.append(('LUA_USE_APICHECK', None))
+if has_option('--with-lua-dlopen'):
+    c_defines.append(('LUA_USE_DLOPEN', None))
 
 
 # find Lua
@@ -360,12 +368,15 @@ if not configs and not option_no_bundle:
             # Couldn't get the Windows build to work. See
             # https://luajit.org/install.html#windows
             or (platform.startswith('win') and 'luajit' in os.path.basename(lua_bundle_path.rstrip(os.sep)))
+            # Let's restrict LuaJIT to x86_64 for now.
+            or (get_machine() not in ("x86_64", "AMD64") and 'luajit' in os.path.basename(lua_bundle_path.rstrip(os.sep)))
         )
     ]
-if not configs and not option_use_bundle:
-    configs = find_lua_build(no_luajit=option_no_luajit)
 if not configs:
-    configs = no_lua_error()
+    configs = [
+        (find_lua_build(no_luajit=option_no_luajit) if not option_use_bundle else {})
+        or no_lua_error()
+    ]
 
 
 # check if Cython is installed, and use it if requested or necessary
@@ -444,6 +455,11 @@ for config in configs:
 if dll_files:
     extra_setup_args['package_data'] = {'lupa': dll_files}
 
+cython_dependency = ([
+    line for line in read_file(os.path.join(basedir, "requirements.txt")).splitlines()
+    if 'Cython' in line
+] + ["Cython"])[0]
+
 # call distutils
 
 setup(
@@ -475,13 +491,15 @@ setup(
         'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
+        'Programming Language :: Lua',
         'Programming Language :: Other Scripting Engines',
         'Operating System :: OS Independent',
         'Topic :: Software Development',
     ],
 
     packages=['lupa'],
-    build_requires=['Cython>=0.29.28'],
+    setup_requires=[cython_dependency],
     ext_modules=ext_modules,
     libraries=ext_libraries,
     **extra_setup_args

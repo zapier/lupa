@@ -14,7 +14,14 @@ import lupa
 import lupa.tests
 from lupa.tests import LupaTestCase
 
+try:
+    import platform
+    IS_PYPY = platform.python_implementation() == 'PyPy'
+except (ImportError, AttributeError):
+    IS_PYPY = False
+
 IS_PYTHON2 = sys.version_info[0] < 3
+not_in_pypy = unittest.skipIf(IS_PYPY, "test not run in PyPy")
 
 try:
     _next = next
@@ -52,9 +59,14 @@ class TestLuaRuntimeRefcounting(LupaTestCase):
         if off_by_one and old_count == new_count + 1:
             # FIXME: This happens in test_attrgetter_refcycle - need to investigate why!
             self.assertEqual(old_count, new_count + 1)
+        elif off_by_one and old_count == new_count + 2 and (
+                sys.version_info[:2] == (3,7) or sys.version_info >= (3,11)):
+            # FIXME: This happens in test_attrgetter_refcycle - need to investigate why!
+            self.assertEqual(old_count, new_count + 2)
         else:
             self.assertEqual(old_count, new_count)
 
+    @not_in_pypy
     def test_runtime_cleanup(self):
         def run_test():
             lua = self.lupa.LuaRuntime()
@@ -64,6 +76,7 @@ class TestLuaRuntimeRefcounting(LupaTestCase):
 
         self._run_gc_test(run_test)
 
+    @not_in_pypy
     def test_pyfunc_refcycle(self):
         def make_refcycle():
             def use_runtime():
@@ -75,6 +88,7 @@ class TestLuaRuntimeRefcounting(LupaTestCase):
 
         self._run_gc_test(make_refcycle)
 
+    @not_in_pypy
     def test_attrgetter_refcycle(self):
         def make_refcycle():
             def get_attr(obj, name):
@@ -90,6 +104,9 @@ class TestLuaRuntimeRefcounting(LupaTestCase):
 
 
 class TestLuaRuntime(SetupLuaRuntimeMixin, LupaTestCase):
+    def assertLuaResult(self, lua_expression, result):
+        self.assertEqual(self.lua.eval(lua_expression), result)
+
     def test_lua_version(self):
         version = self.lua.lua_version
         self.assertEqual(tuple, type(version))
@@ -114,6 +131,14 @@ class TestLuaRuntime(SetupLuaRuntimeMixin, LupaTestCase):
 
     def test_eval_args_multi(self):
         self.assertEqual((1, 2, 3), self.lua.eval('...', 1, 2, 3))
+
+    def test_eval_name_mode(self):
+        self.assertEqual(2, self.lua.eval('1+1', name='plus', mode='t'))
+
+    def test_eval_mode_error(self):
+        if self.lupa.LUA_VERSION < (5, 2):
+            raise unittest.SkipTest("needs lua 5.2+")
+        self.assertRaises(self.lupa.LuaSyntaxError, self.lua.eval, '1+1', name='plus', mode='b')
 
     def test_eval_error(self):
         self.assertRaises(self.lupa.LuaError, self.lua.eval, '<INVALIDCODE>')
@@ -141,6 +166,14 @@ class TestLuaRuntime(SetupLuaRuntimeMixin, LupaTestCase):
 
     def test_execute(self):
         self.assertEqual(2, self.lua.execute('return 1+1'))
+
+    def test_execute_mode(self):
+        self.assertEqual(2, self.lua.execute('return 1+1', name='return_plus', mode='t'))
+
+    def test_execute_mode_error(self):
+        if self.lupa.LUA_VERSION < (5, 2):
+            raise unittest.SkipTest("needs lua 5.2+")
+        self.assertRaises(self.lupa.LuaSyntaxError, self.lua.execute, 'return 1+1', name='plus', mode='b')
 
     def test_execute_function(self):
         self.assertEqual(3, self.lua.execute('f = function(i) return i+1 end; return f(2)'))
@@ -494,10 +527,11 @@ class TestLuaRuntime(SetupLuaRuntimeMixin, LupaTestCase):
         self.assertEqual(6, len(table))
 
     def test_table_from_dict(self):
-        table = self.lua.table_from({"foo": 1, "bar": 20, "baz": "spam"})
+        table = self.lua.table_from({"foo": 1, "bar": 20, "baz": "spam", None: "python.none"})
         self.assertEqual(     1, table['foo'])
         self.assertEqual(    20, table['bar'])
         self.assertEqual("spam", table['baz'])
+        self.assertEqual("python.none", table[None])
 
         self.assertEqual(0, len(table))
 
@@ -567,10 +601,23 @@ class TestLuaRuntime(SetupLuaRuntimeMixin, LupaTestCase):
         self.assertRaises(TypeError, self.lua.table_from, None)
         self.assertRaises(TypeError, self.lua.table_from, {"a": 5}, 123)
 
-    # def test_table_from_nested(self):
-    #     table = self.lua.table_from({"obj": {"foo": "bar"}})
-    #     lua_type = self.lua.eval("type")
-    #     self.assertEqual(lua_type(table["obj"]), "table")
+    def test_table_from_nested(self):
+        table = self.lua.table_from([[3, 3, 3]], recursive=True)
+        self.lua.globals()["data"] = table
+        self.assertLuaResult("data[1][1]", 3)
+        self.assertLuaResult("data[1][2]", 3)
+        self.assertLuaResult("data[1][3]", 3)
+        self.assertLuaResult("type(data)", "table")
+        self.assertLuaResult("type(data[1])", "table")
+        self.assertLuaResult("#data", 1)
+        self.assertLuaResult("#data[1]", 3)
+
+    def test_table_from_nested2(self):
+        table2 = self.lua.table_from([{"a": "foo"}, {"b": 1}], recursive=True)
+        self.lua.globals()["data2"] = table2
+        self.assertLuaResult("#data2", 2)
+        self.assertLuaResult("data2[1]['a']", "foo")
+        self.assertLuaResult("data2[2]['b']", 1)
 
     def test_table_from_table(self):
         table1 = self.lua.eval("{3, 4, foo='bar'}")
@@ -600,6 +647,75 @@ class TestLuaRuntime(SetupLuaRuntimeMixin, LupaTestCase):
         self.assertEqual(len(table2), 3)
         self.assertEqual(list(table2.keys()), [1, 2, 3])
         self.assertEqual(set(table2.values()), set([1, 2, "foo"]))
+
+    def test_table_from_nested_dict(self):
+        data = {"a": {"a": "foo"}, "b": {"b": "bar"}}
+        table = self.lua.table_from(data, recursive=True)
+        self.assertEqual(table["a"]["a"], "foo")
+        self.assertEqual(table["b"]["b"], "bar")
+        self.lua.globals()["data"] = table
+        self.assertLuaResult("data.a.a", "foo")
+        self.assertLuaResult("data.b.b", "bar")
+        self.assertLuaResult("type(data.a)", "table")
+        self.assertLuaResult("type(data.b)", "table")
+
+    def test_table_from_nested_list(self):
+        data = {"a": {"a": "foo"}, "b": [1, 2, 3]}
+        table = self.lua.table_from(data, recursive=True)
+        self.assertEqual(table["a"]["a"], "foo")
+        self.assertEqual(table["b"][1], 1)
+        self.assertEqual(table["b"][2], 2)
+        self.assertEqual(table["b"][3], 3)
+        self.lua.globals()["data"] = table
+        self.assertLuaResult("data.a.a", "foo")
+        self.assertLuaResult("#data.b", 3)
+        self.lua.eval("assert(#data.b==3, 'failed')")
+        self.assertLuaResult("type(data.a)", "table")
+        self.assertLuaResult("type(data.b)", "table")
+
+    def test_table_from_nested_list_bad(self):
+        data = {"a": {"a": "foo"}, "b": [1, 2, 3]}
+        table = self.lua.table_from(data) # in this case, lua will get userdata instead of table
+        self.assertEqual(table["a"]["a"], "foo")
+        self.assertEqual(list(table["b"]), [1, 2, 3])
+        self.assertEqual(table["b"][0], 1)
+        self.assertEqual(table["b"][1], 2)
+        self.assertEqual(table["b"][2], 3)
+        self.lua.globals()["data"] = table
+        self.assertLuaResult("type(data.a)", "userdata")
+        self.assertLuaResult("type(data.b)", "userdata")
+
+    def test_table_from_self_ref_obj(self):
+        data = {}
+        data["key"] = data
+        l = []
+        l.append(l)
+        data["list"] = l
+        table = self.lua.table_from(data, recursive=True)
+        self.lua.globals()["data"] = table
+        self.assertLuaResult("type(data)", 'table')
+        self.assertLuaResult("type(data['key'])",'table')
+        self.assertLuaResult("type(data['list'])",'table')
+        self.assertLuaResult("data['list']==data['list'][1]", True)
+        self.assertLuaResult("type(data['key']['key']['key']['key'])", 'table')
+        self.assertLuaResult("type(data['key']['key']['key']['key']['list'])", 'table')
+
+    def test_table_from_nested_datastructures(self):
+        from itertools import count
+        def make_ds(*children):
+            yield list(children)
+            yield dict(zip(count(), children))
+            yield {chr(ord('A') + i): child for i, child in enumerate(children)}
+
+        elements = [1, 2, 'x', 'y']
+        for ds1 in make_ds(*elements):
+            for ds2 in make_ds(ds1):
+                for ds3 in make_ds(ds1, elements, ds2):
+                    for ds in make_ds(ds1, ds2, ds3):
+                        with self.subTest(ds=ds):
+                            table = self.lua.table_from(ds)
+                            # we don't translate transitively, so apply arbitrary test operation
+                            self.assertTrue(list(table))
 
     # FIXME: it segfaults
     # def test_table_from_generator_calling_lua_functions(self):
@@ -904,6 +1020,12 @@ class TestLuaRuntime(SetupLuaRuntimeMixin, LupaTestCase):
     def test_compile(self):
         lua_func = self.lua.compile('return 1 + 2')
         self.assertEqual(lua_func(), 3)
+        lua_func = self.lua.compile('return 3 + 2', mode='t')
+        self.assertEqual(lua_func(), 5)
+        lua_func = self.lua.compile('return 1 + 3', name='huhu')
+        self.assertEqual(lua_func(), 4)
+        lua_func = self.lua.compile('return 2 + 3', name='huhu', mode='t')
+        self.assertEqual(lua_func(), 5)
         self.assertRaises(self.lupa.LuaSyntaxError, self.lua.compile, 'function awd()')
 
 
@@ -1291,6 +1413,8 @@ class TestPythonObjectsInLua(SetupLuaRuntimeMixin, LupaTestCase):
 
 
 class TestLuaCoroutines(SetupLuaRuntimeMixin, LupaTestCase):
+
+    @unittest.skipIf(IS_PYPY, "attribute access differs in PyPy")
     def test_coroutine_object(self):
         f = self.lua.eval("function(N) coroutine.yield(N) end")
         gen = f.coroutine(5)
@@ -2995,12 +3119,71 @@ class TestLuaObjectString(SetupLuaRuntimeMixin, LupaTestCase):
         self.assertRaises(self.lupa.LuaError, str, self.lua.eval('setmetatable({}, {__tostring = function() error() end})'))
 
 
+################################################################################
+# test LuaRuntime max_memory
+
+class TestMaxMemory(SetupLuaRuntimeMixin, LupaTestCase):
+    lua_runtime_kwargs = {"max_memory": 10000}
+
+    def setUp(self):
+        # need to test in here because the creation of the LuaRuntime fails
+        if "luajit" in self.lupa.LuaRuntime().lua_implementation.lower():
+            return self.skipTest("not supported in LuaJIT")
+        return super(TestMaxMemory, self).setUp()
+
+    def test_getters(self):
+        self.assertEqual(self.lua.get_memory_used(), 0)
+        self.assertGreater(self.lua.get_memory_used(total=True), 0)
+        self.assertEqual(self.lua.get_max_memory(), 10000)
+        self.assertGreater(self.lua.get_max_memory(total=True), 10000)
+        self.lua.set_max_memory(1000000)
+        self.assertEqual(self.lua.get_memory_used(), 0)
+        self.assertGreater(self.lua.get_memory_used(total=True), 0)
+        self.assertEqual(self.lua.get_max_memory(), 1000000)
+        self.assertGreater(self.lua.get_max_memory(total=True), 1000000)
+        self.lua.set_max_memory(1000000, total=True)
+        self.assertEqual(self.lua.get_max_memory(total=True), 1000000)
+        self.assertLess(self.lua.get_max_memory(), 1000000)
+
+    def test_not_enough_memory(self):
+        self.lua.eval("('a'):rep(50)")
+        self.assertRaises(self.lupa.LuaMemoryError, self.lua.eval, "('a'):rep(50000)")
+
+    def test_decrease_memory(self):
+        self.lua.set_max_memory(1000000)
+        self.lua.execute("a = ('a'):rep(50000)")
+        self.lua.set_max_memory(10000)
+        self.assertEqual(self.lua.get_max_memory(), 10000)
+        self.assertGreaterEqual(self.lua.get_memory_used(), 50000)
+        self.assertRaises(self.lupa.LuaMemoryError, self.lua.eval, "('b'):rep(10)")
+        del self.lua.globals()["a"]
+        if self.lua.lua_version >= (5, 2):
+            # Lua 5.1 doesn't free the memory of `a` after deleting it
+            self.lua.eval("('b'):rep(10)")
+
+    def test_compile_not_enough_memory(self):
+        self.lua.set_max_memory(10)
+        self.assertRaises(self.lupa.LuaMemoryError, self.lua.compile, "_G.a = function() return 'test abcdef' end")
+
+    def test_unlimited_memory(self):
+        self.lua.set_max_memory(0)
+        self.lua.execute("a = ('a'):rep(50000)")
+
+
+class TestMaxMemoryWithoutSettingIt(SetupLuaRuntimeMixin, LupaTestCase):
+    def test_property(self):
+        self.assertEqual(self.lua.get_max_memory(), None)
+
+    def test_set_max(self):
+        self.assertRaises(RuntimeError, self.lua.set_max_memory, 10000)
+
 
 ################################################################################
 # Load tests for different Lua version modules
 
 def load_tests(loader, standard_tests, pattern):
     return lupa.tests.build_suite_for_modules(loader, globals())
+
 
 
 if __name__ == '__main__':
