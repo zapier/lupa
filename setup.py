@@ -19,7 +19,7 @@ try:
 except ImportError:
     from distutils.core import setup, Extension
 
-VERSION = '2.1'
+VERSION = '2.1.1.post1'
 
 extra_setup_args = {}
 
@@ -348,35 +348,9 @@ if has_option('--with-lua-checks'):
 if has_option('--with-lua-dlopen'):
     c_defines.append(('LUA_USE_DLOPEN', None))
 
-
-# find Lua
-option_no_bundle = has_option('--no-bundle')
-option_use_bundle = has_option('--use-bundle')
-option_no_luajit = has_option('--no-luajit')
-
-configs = get_lua_build_from_arguments()
-if not configs and not option_no_bundle:
-    configs = [
-        use_bundled_lua(lua_bundle_path, c_defines)
-        for lua_bundle_path in glob.glob(os.path.join(basedir, 'third-party', 'lua*' + os.sep))
-        if not (
-            False
-            # LuaJIT 2.0 on macOS requires a CPython linked with "-pagezero_size 10000 -image_base 100000000"
-            # http://t-p-j.blogspot.com/2010/11/lupa-on-os-x-with-macports-python-26.html
-            # LuaJIT 2.1-alpha3 fails at runtime.
-            or (platform == 'darwin' and 'luajit' in os.path.basename(lua_bundle_path.rstrip(os.sep)))
-            # Couldn't get the Windows build to work. See
-            # https://luajit.org/install.html#windows
-            or (platform.startswith('win') and 'luajit' in os.path.basename(lua_bundle_path.rstrip(os.sep)))
-            # Let's restrict LuaJIT to x86_64 for now.
-            or (get_machine() not in ("x86_64", "AMD64") and 'luajit' in os.path.basename(lua_bundle_path.rstrip(os.sep)))
-        )
-    ]
-if not configs:
-    configs = [
-        (find_lua_build(no_luajit=option_no_luajit) if not option_use_bundle else {})
-        or no_lua_error()
-    ]
+# Build with bundled lua51 only
+lua51_path = os.path.join(basedir, 'third-party', 'lua51')
+configs = [use_bundled_lua(lua51_path, c_defines)]
 
 
 # check if Cython is installed, and use it if requested or necessary
@@ -455,11 +429,6 @@ for config in configs:
 if dll_files:
     extra_setup_args['package_data'] = {'lupa': dll_files}
 
-cython_dependency = ([
-    line for line in read_file(os.path.join(basedir, "requirements.txt")).splitlines()
-    if 'Cython' in line
-] + ["Cython"])[0]
-
 # call distutils
 
 setup(
@@ -499,7 +468,7 @@ setup(
     ],
 
     packages=['lupa'],
-    setup_requires=[cython_dependency],
+    setup_requires=['Cython'],
     ext_modules=ext_modules,
     libraries=ext_libraries,
     **extra_setup_args
